@@ -13,10 +13,10 @@ import (
 )
 
 type FileInfo struct {
-	init          bool
-	file          *os.File
-	writeInfo     []bool
-	hasWriteChunk int64
+	init             bool
+	file             *os.File
+	uploaded         []bool
+	uploadedChunkNum int64
 }
 
 type UploadServer struct {
@@ -44,7 +44,7 @@ func (s *UploadServer) TestChunk(c echo.Context) error {
 
 	// 这里返回的应该得是 permanentErrors，不是 404. 不然前端会上传失败而不是重传块。
 	// 梁哥应该得改一下。
-	if !fileInfo.writeInfo[chunkNumber-1] {
+	if !fileInfo.uploaded[chunkNumber-1] {
 		return c.NoContent(http.StatusNoContent)
 	}
 
@@ -74,6 +74,10 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, err)
 	}
+	totalSize, err := strconv.ParseInt(c.FormValue("totalSize"), 10, 64)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, err)
+	}
 
 	identifier := c.FormValue("identifier")
 	fileName := c.FormValue("filename")
@@ -89,11 +93,17 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, err)
 		}
+
+		// pre allocate file size
+		err = file.Truncate(totalSize)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, err)
+		}
 		s.fileInfo[identifier] = FileInfo{
-			file:          file,
-			init:          true,
-			writeInfo:     make([]bool, totalChunks),
-			hasWriteChunk: 0,
+			file:             file,
+			init:             true,
+			uploaded:         make([]bool, totalChunks),
+			uploadedChunkNum: 0,
 		}
 		fileInfo = s.fileInfo[identifier]
 	}
@@ -102,7 +112,10 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, err)
 	}
 
-	fileInfo.file.Seek((chunkNumber-1)*chunkSize, io.SeekStart)
+	_, err = fileInfo.file.Seek((chunkNumber-1)*chunkSize, io.SeekStart)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, err)
+	}
 
 	src, err := bin.Open()
 	if err != nil {
@@ -111,6 +124,7 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 	defer src.Close()
 
 	buf := make([]byte, int(currentChunkSize))
+	// TODO zerocopy
 	_, err = io.CopyBuffer(fileInfo.file, src, buf)
 	if err != nil {
 		fmt.Println(err)
@@ -118,16 +132,17 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 	}
 
 	// handle file after write a chunk
-	fileInfo.writeInfo[chunkNumber-1] = true
+	fileInfo.uploaded[chunkNumber-1] = true
 	s.fileInfo[identifier] = FileInfo{
-		file:          fileInfo.file,
-		init:          true,
-		writeInfo:     fileInfo.writeInfo,
-		hasWriteChunk: fileInfo.hasWriteChunk + 1,
+		file:     fileInfo.file,
+		init:     true,
+		uploaded: fileInfo.uploaded,
+		// TODO handle single chunk upload twice
+		uploadedChunkNum: fileInfo.uploadedChunkNum + 1,
 	}
 
 	// handle file after write all chunk
-	if fileInfo.hasWriteChunk == totalChunks-1 {
+	if fileInfo.uploadedChunkNum == totalChunks-1 {
 		fileInfo.file.Close()
 		os.Rename(path+"/"+fileName+".tmp", path+"/"+fileName)
 	}
