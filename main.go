@@ -54,9 +54,6 @@ func (s *UploadServer) TestChunk(c echo.Context) error {
 }
 
 func (s *UploadServer) UploadFile(c echo.Context) error {
-	// s.lock.Lock()
-	// defer s.lock.Unlock()
-
 	path := "uploads"
 
 	// handle the request
@@ -89,16 +86,14 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, err)
 	}
 
-	// file info handle
 	fileInfoTemp, ok := s.fileInfo.Load(identifier)
 	var fileInfo *FileInfo
 
 	s.lock.Lock()
-	// defer s.lock.Unlock()
 
 	file, err := os.OpenFile(path+"/"+fileName+".tmp", os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
-		fmt.Println(err)
+		s.lock.Unlock()
 		return c.JSON(http.StatusInternalServerError, err)
 	}
 
