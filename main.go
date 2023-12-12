@@ -20,7 +20,7 @@ type FileInfo struct {
 }
 
 type UploadServer struct {
-	fileInfo map[string]FileInfo
+	fileInfo map[string]*FileInfo
 	lock     sync.RWMutex
 }
 
@@ -99,13 +99,15 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, err)
 		}
-		s.fileInfo[identifier] = FileInfo{
+
+		// file info init
+		fileInfo = &FileInfo{
 			file:             file,
 			init:             true,
 			uploaded:         make([]bool, totalChunks),
 			uploadedChunkNum: 0,
 		}
-		fileInfo = s.fileInfo[identifier]
+		s.fileInfo[identifier] = fileInfo
 	}
 
 	if err != nil {
@@ -131,17 +133,11 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, err)
 	}
 
+	// handle file after write a chunk
 	// handle single chunk upload twice
 	if !fileInfo.uploaded[chunkNumber-1] {
 		fileInfo.uploadedChunkNum++
-	}
-	// handle file after write a chunk
-	fileInfo.uploaded[chunkNumber-1] = true
-	s.fileInfo[identifier] = FileInfo{
-		file:             fileInfo.file,
-		init:             true,
-		uploaded:         fileInfo.uploaded,
-		uploadedChunkNum: fileInfo.uploadedChunkNum,
+		fileInfo.uploaded[chunkNumber-1] = true
 	}
 
 	// handle file after write all chunk
@@ -149,6 +145,7 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 		fileInfo.file.Close()
 		os.Rename(path+"/"+fileName+".tmp", path+"/"+fileName)
 	}
+
 	return c.NoContent(http.StatusOK)
 }
 
@@ -163,7 +160,7 @@ func main() {
 	}))
 
 	s := &UploadServer{
-		fileInfo: make(map[string]FileInfo),
+		fileInfo: make(map[string]*FileInfo),
 		lock:     sync.RWMutex{},
 	}
 	e.GET("/upload", s.TestChunk)
