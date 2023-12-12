@@ -14,7 +14,6 @@ import (
 
 type FileInfo struct {
 	init             bool
-	file             *os.File
 	uploaded         []bool
 	uploadedChunkNum int64
 }
@@ -94,21 +93,32 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 	fileInfoTemp, ok := s.fileInfo.Load(identifier)
 	var fileInfo *FileInfo
 
+	s.lock.Lock()
+	// defer s.lock.Unlock()
+
+	file, err := os.OpenFile(path+"/"+fileName+".tmp", os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		fmt.Println(err)
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
 	if !ok {
-		file, err := os.Create(path + "/" + fileName + ".tmp")
+		// file, err := os.Create(path + "/" + fileName + ".tmp")
+
 		if err != nil {
+			s.lock.Unlock()
 			return c.JSON(http.StatusInternalServerError, err)
 		}
 
 		// pre allocate file size
-		err = file.Truncate(totalSize)
+		fmt.Println("truncate", totalSize)
 		if err != nil {
+			s.lock.Unlock()
 			return c.JSON(http.StatusInternalServerError, err)
 		}
 
 		// file info init
 		fileInfo = &FileInfo{
-			file:             file,
 			init:             true,
 			uploaded:         make([]bool, totalChunks),
 			uploadedChunkNum: 0,
@@ -117,12 +127,9 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 	} else {
 		fileInfo = fileInfoTemp.(*FileInfo)
 	}
+	s.lock.Unlock()
 
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, err)
-	}
-
-	_, err = fileInfo.file.Seek((chunkNumber-1)*chunkSize, io.SeekStart)
+	_, err = file.Seek((chunkNumber-1)*chunkSize, io.SeekStart)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, err)
 	}
@@ -133,11 +140,9 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 	}
 	defer src.Close()
 
-	s.lock.Lock()
 	buf := make([]byte, int(currentChunkSize))
 	// TODO zerocopy
-	_, err = io.CopyBuffer(fileInfo.file, src, buf)
-	s.lock.Unlock()
+	_, err = io.CopyBuffer(file, src, buf)
 
 	if err != nil {
 		fmt.Println(err)
@@ -153,10 +158,9 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 
 	// handle file after write all chunk
 	if fileInfo.uploadedChunkNum == totalChunks {
-		fileInfo.file.Close()
+		file.Close()
 		os.Rename(path+"/"+fileName+".tmp", path+"/"+fileName)
 	}
-
 	return c.NoContent(http.StatusOK)
 }
 
