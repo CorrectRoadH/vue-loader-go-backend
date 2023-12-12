@@ -131,14 +131,17 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, err)
 	}
 
+	// handle single chunk upload twice
+	if !fileInfo.uploaded[chunkNumber-1] {
+		fileInfo.uploadedChunkNum++
+	}
 	// handle file after write a chunk
 	fileInfo.uploaded[chunkNumber-1] = true
 	s.fileInfo[identifier] = FileInfo{
-		file:     fileInfo.file,
-		init:     true,
-		uploaded: fileInfo.uploaded,
-		// TODO handle single chunk upload twice
-		uploadedChunkNum: fileInfo.uploadedChunkNum + 1,
+		file:             fileInfo.file,
+		init:             true,
+		uploaded:         fileInfo.uploaded,
+		uploadedChunkNum: fileInfo.uploadedChunkNum,
 	}
 
 	// handle file after write all chunk
