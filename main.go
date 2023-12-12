@@ -20,23 +20,26 @@ type FileInfo struct {
 }
 
 type UploadServer struct {
-	fileInfo map[string]*FileInfo
+	fileInfo sync.Map
 	lock     sync.RWMutex
 }
 
 func (s *UploadServer) TestChunk(c echo.Context) error {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
+	// s.lock.RLock()
+	// defer s.lock.RUnlock()
 
 	identifier := c.QueryParam("identifier")
 	chunkNumber, err := strconv.ParseInt(c.QueryParam("chunkNumber"), 10, 64)
 	if err != nil {
 		return err
 	}
-	fileInfo, ok := s.fileInfo[identifier]
+	fileInfoTemp, ok := s.fileInfo.Load(identifier)
+
 	if !ok {
 		return c.NoContent(http.StatusNoContent)
 	}
+
+	fileInfo := fileInfoTemp.(*FileInfo)
 
 	if !fileInfo.init {
 		return c.NoContent(http.StatusNoContent)
@@ -52,8 +55,8 @@ func (s *UploadServer) TestChunk(c echo.Context) error {
 }
 
 func (s *UploadServer) UploadFile(c echo.Context) error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	// s.lock.Lock()
+	// defer s.lock.Unlock()
 
 	path := "uploads"
 
@@ -82,12 +85,15 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 	identifier := c.FormValue("identifier")
 	fileName := c.FormValue("filename")
 	bin, err := c.FormFile("file")
+
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, err)
 	}
 
 	// file info handle
-	fileInfo, ok := s.fileInfo[identifier]
+	fileInfoTemp, ok := s.fileInfo.Load(identifier)
+	var fileInfo *FileInfo
+
 	if !ok {
 		file, err := os.Create(path + "/" + fileName + ".tmp")
 		if err != nil {
@@ -107,7 +113,9 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 			uploaded:         make([]bool, totalChunks),
 			uploadedChunkNum: 0,
 		}
-		s.fileInfo[identifier] = fileInfo
+		s.fileInfo.Store(identifier, fileInfo)
+	} else {
+		fileInfo = fileInfoTemp.(*FileInfo)
 	}
 
 	if err != nil {
@@ -125,9 +133,12 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 	}
 	defer src.Close()
 
+	s.lock.Lock()
 	buf := make([]byte, int(currentChunkSize))
 	// TODO zerocopy
 	_, err = io.CopyBuffer(fileInfo.file, src, buf)
+	s.lock.Unlock()
+
 	if err != nil {
 		fmt.Println(err)
 		return c.JSON(http.StatusInternalServerError, err)
@@ -141,7 +152,7 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 	}
 
 	// handle file after write all chunk
-	if fileInfo.uploadedChunkNum == totalChunks-1 {
+	if fileInfo.uploadedChunkNum == totalChunks {
 		fileInfo.file.Close()
 		os.Rename(path+"/"+fileName+".tmp", path+"/"+fileName)
 	}
@@ -160,7 +171,7 @@ func main() {
 	}))
 
 	s := &UploadServer{
-		fileInfo: make(map[string]*FileInfo),
+		fileInfo: sync.Map{},
 		lock:     sync.RWMutex{},
 	}
 	e.GET("/upload", s.TestChunk)
