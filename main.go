@@ -144,6 +144,7 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, err)
 	}
 
+	s.lock.Lock()
 	// handle file after write a chunk
 	// handle single chunk upload twice
 	if !fileInfo.uploaded[chunkNumber-1] {
@@ -156,6 +157,8 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 		file.Close()
 		os.Rename(path+"/"+fileName+".tmp", path+"/"+fileName)
 	}
+	s.lock.Unlock()
+
 	return c.NoContent(http.StatusOK)
 }
 
