@@ -85,11 +85,9 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, err)
 	}
-
+	s.lock.Lock()
 	fileInfoTemp, ok := s.fileInfo.Load(identifier)
 	var fileInfo *FileInfo
-
-	s.lock.Lock()
 
 	file, err := os.OpenFile(path+"/"+fileName+".tmp", os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
@@ -122,6 +120,7 @@ func (s *UploadServer) UploadFile(c echo.Context) error {
 	} else {
 		fileInfo = fileInfoTemp.(*FileInfo)
 	}
+
 	s.lock.Unlock()
 
 	_, err = file.Seek((chunkNumber-1)*chunkSize, io.SeekStart)
